@@ -5,6 +5,7 @@ use gtk4::Orientation;
 use gtk4::SearchEntry;
 use gtk4::glib;
 use gtk4::prelude::*;
+use gtk4::{Label, ListBox};
 use ignore::WalkBuilder;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
@@ -12,7 +13,9 @@ use std::path::Path;
 
 const APP_ID: &str = "com.pietrotommasini.archspotlight";
 const IGNORED_DIRS: [&str; 4] = [".cache", ".git", "target", "node_modules"];
+const MAX_RESULTS: usize = 10;
 
+#[derive(Debug, Clone)]
 struct FileEntry {
     name: String,
     path: String,
@@ -25,7 +28,6 @@ impl AsRef<str> for FileEntry {
 }
 
 fn main() -> glib::ExitCode {
-
     let app = Application::builder().application_id(APP_ID).build();
     app.connect_activate(build_ui);
 
@@ -43,13 +45,21 @@ fn build_ui(app: &Application) {
         .orientation(Orientation::Vertical)
         .build();
 
+    let entries_container = ListBox::builder().build();
+    let ec_clone = entries_container.clone();
+
     let searchbar = SearchEntry::builder().build();
     searchbar.connect_search_changed(move |entry| {
         let query = entry.text();
-        fuzzy_test(&query_result, &query);
+        ec_clone.remove_all();
+        let fuzzy_result = fuzzy_search(&query_result, &query);
+        for item in fuzzy_result {
+            ec_clone.append(&Label::new(Some(&item.name)));
+        }
     });
 
     container.append(&searchbar);
+    container.append(&entries_container);
 
     let window = ApplicationWindow::builder()
         .application(app)
@@ -76,9 +86,11 @@ fn walk_directories(query_path: &Path) -> Vec<FileEntry> {
             Ok(res) => {
                 let name = res.file_name().to_string_lossy().to_string();
                 let path = res.path().display().to_string();
-                let entry = FileEntry{name: name, path: path};
+                let entry = FileEntry {
+                    name: name,
+                    path: path,
+                };
                 query_name_list.push(entry)
-                
             }
             Err(err) => {
                 println!("{err}")
@@ -88,11 +100,14 @@ fn walk_directories(query_path: &Path) -> Vec<FileEntry> {
     query_name_list
 }
 
-fn fuzzy_test(paths:&Vec<FileEntry>, query:&str) {
+fn fuzzy_search(paths: &Vec<FileEntry>, query: &str) -> Vec<FileEntry> {
     let mut matcher = Matcher::new(Config::DEFAULT);
     let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
-    let items = pattern.match_list(paths, &mut matcher);
-    for (entry, value) in items {
-        println!("name: {}, path: {}, score: {value}", entry.name, entry.path);
+    let mut items = pattern.match_list(paths, &mut matcher);
+    items.truncate(MAX_RESULTS);
+    let mut res = Vec::new();
+    for (entry, _score) in items {
+        res.push(entry.clone())
     }
+    res
 }
