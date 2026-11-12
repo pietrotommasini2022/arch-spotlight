@@ -11,6 +11,7 @@ use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
 use std::cell::RefCell;
 use std::path::Path;
+use std::process::Command;
 use std::rc::Rc;
 
 const APP_ID: &str = "com.pietrotommasini.archspotlight";
@@ -49,6 +50,9 @@ fn build_ui(app: &Application) {
 
     let entries_container = ListBox::builder().build();
     let ec_clone = entries_container.clone();
+    let a_clone = app.clone();
+    let a_clone_refine = app.clone();
+    let ec_clone_refine = entries_container.clone();
 
     let shared_box = Rc::new(RefCell::new(Vec::new()));
     let sb_clone = shared_box.clone();
@@ -85,12 +89,36 @@ fn build_ui(app: &Application) {
         let entries = shared_box.borrow();
         match entries.get(index) {
             Some(entry) => {
-                println!("{}", entry.path)
+                let open_cmd = Command::new("xdg-open").arg(&entry.path).spawn();
+
+                match open_cmd {
+                    Ok(_res) => {
+                        a_clone.quit();
+                    }
+                    Err(err) => {
+                        println!("{err}")
+                    }
+                }
             }
             None => {
                 println!("nothing")
             }
         }
+    });
+
+    searchbar.connect_activate(move |_entry|  {
+        match ec_clone_refine.row_at_index(0) {
+            Some(res) => {
+                res.activate();
+            },
+            None => {
+                println!("no item in the list")
+            }
+        }
+    });
+
+    searchbar.connect_stop_search(move |_searchbar| {
+        a_clone_refine.quit();
     });
 
     container.append(&searchbar);
