@@ -6,13 +6,16 @@ use gtk4::SearchEntry;
 use gtk4::glib;
 use gtk4::prelude::*;
 use ignore::WalkBuilder;
+use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
+use nucleo_matcher::{Config, Matcher};
 use std::path::Path;
 
 const APP_ID: &str = "com.pietrotommasini.archspotlight";
 const IGNORED_DIRS: [&str; 4] = [".cache", ".git", "target", "node_modules"];
 
 fn main() -> glib::ExitCode {
-    walk_directories(Path::new("/home/pietro/prova"));
+    // walk_directories(Path::new("/home/pietro/prova"));
+    fuzzy_test();
 
     let app = Application::builder().application_id(APP_ID).build();
     app.connect_activate(build_ui);
@@ -68,5 +71,15 @@ fn walk_directories(query_path: &Path) {
                 println!("{err}")
             }
         }
+    }
+}
+
+fn fuzzy_test() {
+    let list = ["hyprland.conf", "hyprpaper.conf", "photo_cyprus.jpg", "why_pc.txt", "chyp.txt", "README.md", "readme_vecchio.txt", "città.txt", "config.toml"];
+    let mut matcher = Matcher::new(Config::DEFAULT);
+    let pattern = Pattern::parse("citta", CaseMatching::Smart, Normalization::Smart);
+    let items = pattern.match_list(list, &mut matcher);
+    for (name, value) in items {
+        println!("name: {name} score: {value}");
     }
 }
