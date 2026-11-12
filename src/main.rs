@@ -11,7 +11,7 @@ const APP_ID: &str = "com.pietrotommasini.archspotlight";
 
 fn main() -> glib::ExitCode {
 
-    query_directories(Path::new("/home/pietro"));
+    query_directories(Path::new("/home/pietro/Progetti/arch-spotlight"));
     
     let app = Application::builder().application_id(APP_ID).build();
     app.connect_activate(build_ui);
@@ -56,8 +56,18 @@ fn query_directories(query_path: &Path) {
             for item in res {
                 match item {
                     Ok(item_res) => {
-                        let item_path = item_res.path();
-                        println!("{item_path:?}")
+                        let item_type = item_res.file_type();
+                        match item_type {
+                            Ok(type_res) => {
+                                let is_dir = type_res.is_dir();
+                                let file_path = item_res.path();
+                                let file_path_name = file_path.display();
+                                println!("{file_path_name} cartella? {is_dir}")
+                            },
+                            Err(type_err) => {
+                                println!("{type_err}")
+                            }
+                        }
                     },
                     Err(item_err) => {
                         println!("{item_err}")
