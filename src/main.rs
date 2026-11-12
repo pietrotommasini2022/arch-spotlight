@@ -13,6 +13,17 @@ use std::path::Path;
 const APP_ID: &str = "com.pietrotommasini.archspotlight";
 const IGNORED_DIRS: [&str; 4] = [".cache", ".git", "target", "node_modules"];
 
+struct FileEntry {
+    name: String,
+    path: String,
+}
+
+impl AsRef<str> for FileEntry {
+    fn as_ref(&self) -> &str {
+        &self.name
+    }
+}
+
 fn main() -> glib::ExitCode {
 
     let app = Application::builder().application_id(APP_ID).build();
@@ -50,7 +61,7 @@ fn build_ui(app: &Application) {
     window.present();
 }
 
-fn walk_directories(query_path: &Path) -> Vec<String> {
+fn walk_directories(query_path: &Path) -> Vec<FileEntry> {
     let walker = WalkBuilder::new(query_path)
         .hidden(false)
         .filter_entry(|entry| {
@@ -63,8 +74,11 @@ fn walk_directories(query_path: &Path) -> Vec<String> {
     for item in walker {
         match item {
             Ok(res) => {
-                let res_name: String = res.path().display().to_string();
-                query_name_list.push(res_name)
+                let name = res.file_name().to_string_lossy().to_string();
+                let path = res.path().display().to_string();
+                let entry = FileEntry{name: name, path: path};
+                query_name_list.push(entry)
+                
             }
             Err(err) => {
                 println!("{err}")
@@ -74,11 +88,11 @@ fn walk_directories(query_path: &Path) -> Vec<String> {
     query_name_list
 }
 
-fn fuzzy_test(paths:&Vec<String>, query:&str) {
+fn fuzzy_test(paths:&Vec<FileEntry>, query:&str) {
     let mut matcher = Matcher::new(Config::DEFAULT);
     let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
     let items = pattern.match_list(paths, &mut matcher);
-    for (name, value) in items {
-        println!("name: {name} score: {value}");
+    for (entry, value) in items {
+        println!("name: {}, path: {}, score: {value}", entry.name, entry.path);
     }
 }
