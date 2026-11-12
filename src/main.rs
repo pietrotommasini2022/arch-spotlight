@@ -5,13 +5,14 @@ use gtk4::Orientation;
 use gtk4::SearchEntry;
 use gtk4::glib;
 use gtk4::prelude::*;
+use ignore::WalkBuilder;
 use std::path::Path;
 
 const APP_ID: &str = "com.pietrotommasini.archspotlight";
 const IGNORED_DIRS: [&str; 4] = [".cache", ".git", "target", "node_modules"];
 
 fn main() -> glib::ExitCode {
-    query_directories(Path::new("/home/pietro/prova"));
+    walk_directories(Path::new("/home/pietro/prova"));
 
     let app = Application::builder().application_id(APP_ID).build();
     app.connect_activate(build_ui);
@@ -47,44 +48,25 @@ fn build_ui(app: &Application) {
     window.present();
 }
 
-fn query_directories(query_path: &Path) {
-    let results = std::fs::read_dir(query_path);
-    match results {
-        Ok(res) => {
-            for item in res {
-                match item {
-                    Ok(item_res) => {
-                        let item_type = item_res.file_type();
-                        match item_type {
-                            Ok(type_res) => {
-                                let is_dir = type_res.is_dir();
-                                let file_path = item_res.path();
-                                let file_path_name = item_res.file_name();
-                                if IGNORED_DIRS
-                                    .iter()
-                                    .any(|ignored| file_path_name == *ignored)
-                                {
-                                    println!("ignorato");
-                                    continue;
-                                }
-                                println!("{file_path_name:?} cartella? {is_dir}");
-                                if is_dir {
-                                    query_directories(&file_path)
-                                }
-                            }
-                            Err(type_err) => {
-                                println!("{type_err}")
-                            }
-                        }
-                    }
-                    Err(item_err) => {
-                        println!("{item_err}")
-                    }
-                }
+fn walk_directories(query_path: &Path) {
+    let walker = WalkBuilder::new(query_path)
+        .hidden(false)
+        .filter_entry(|entry| {
+            !IGNORED_DIRS
+                .iter()
+                .any(|ignored| entry.file_name() == *ignored)
+        })
+        .build();
+    for item in walker {
+        match item {
+            Ok(res) => {
+                let res_path = res.path();
+                let res_name = res_path.display();
+                println!("{res_name}")
             }
-        }
-        Err(err) => {
-            println!("{err}")
+            Err(err) => {
+                println!("{err}")
+            }
         }
     }
 }
