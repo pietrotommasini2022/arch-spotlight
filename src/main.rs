@@ -8,6 +8,7 @@ use gtk4::prelude::*;
 use std::path::Path;
 
 const APP_ID: &str = "com.pietrotommasini.archspotlight";
+const IGNORED_DIRS: [&str; 4] = [".cache", ".git", "target", "node_modules"];
 
 fn main() -> glib::ExitCode {
     query_directories(Path::new("/home/pietro/prova"));
@@ -59,7 +60,10 @@ fn query_directories(query_path: &Path) {
                                 let is_dir = type_res.is_dir();
                                 let file_path = item_res.path();
                                 let file_path_name = item_res.file_name();
-                                if file_path_name == ".cache" {
+                                if IGNORED_DIRS
+                                    .iter()
+                                    .any(|ignored| file_path_name == *ignored)
+                                {
                                     println!("ignorato");
                                     continue;
                                 }
