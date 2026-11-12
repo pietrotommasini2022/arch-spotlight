@@ -52,6 +52,9 @@ fn build_ui(app: &Application) {
     searchbar.connect_search_changed(move |entry| {
         let query = entry.text();
         ec_clone.remove_all();
+        if query.is_empty() {
+            return;
+        }
         let fuzzy_result = fuzzy_search(&query_result, &query);
         for item in fuzzy_result {
             ec_clone.append(&Label::new(Some(&item.name)));
