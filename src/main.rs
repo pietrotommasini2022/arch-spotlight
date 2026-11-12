@@ -2,6 +2,7 @@ use gtk4::Application;
 use gtk4::ApplicationWindow;
 use gtk4::Orientation;
 use gtk4::SearchEntry;
+use std::path::Path;
 use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4::Box as GtkBox;
@@ -9,6 +10,9 @@ use gtk4::Box as GtkBox;
 const APP_ID: &str = "com.pietrotommasini.archspotlight";
 
 fn main() -> glib::ExitCode {
+
+    query_directories(Path::new("/home/pietro"));
+    
     let app = Application::builder().application_id(APP_ID).build();
     app.connect_activate(build_ui);
 
@@ -43,4 +47,24 @@ fn build_ui(app: &Application) {
     window.present();
 
 
+}
+
+fn query_directories(query_path: &Path) {
+    let results = std::fs::read_dir(query_path);
+    match results {
+        Ok(res) => {
+            for item in res {
+                match item {
+                    Ok(item_res) => {
+                        let item_path = item_res.path();
+                        println!("{item_path:?}")
+                    },
+                    Err(item_err) => {
+                        println!("{item_err}")
+                    }
+                }
+            }
+        },
+        Err(err) => {println!("{err}")}
+    }
 }
