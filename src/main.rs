@@ -131,6 +131,7 @@ fn build_ui(app: &Application) {
         .build();
 
     window.set_child(Some(&container));
+    searchbar.set_key_capture_widget(Some(&window));
     window.present();
 }
 
