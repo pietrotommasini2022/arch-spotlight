@@ -9,7 +9,9 @@ use gtk4::{Label, ListBox};
 use ignore::WalkBuilder;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
+use std::cell::RefCell;
 use std::path::Path;
+use std::rc::Rc;
 
 const APP_ID: &str = "com.pietrotommasini.archspotlight";
 const IGNORED_DIRS: [&str; 4] = [".cache", ".git", "target", "node_modules"];
@@ -48,34 +50,46 @@ fn build_ui(app: &Application) {
     let entries_container = ListBox::builder().build();
     let ec_clone = entries_container.clone();
 
+    let shared_box = Rc::new(RefCell::new(Vec::new()));
+    let sb_clone = shared_box.clone();
+
     let searchbar = SearchEntry::builder().build();
     searchbar.connect_search_changed(move |entry| {
         let query = entry.text();
         ec_clone.remove_all();
         if query.is_empty() {
+            sb_clone.replace(Vec::new());
             return;
         }
         let fuzzy_result = fuzzy_search(&query_result, &query);
-        for item in fuzzy_result {
+        for item in &fuzzy_result {
             let single_result_container = GtkBox::builder()
-            .orientation(Orientation::Vertical)
-            .hexpand(true)
-            .build();
+                .orientation(Orientation::Vertical)
+                .hexpand(true)
+                .build();
 
-            let main_result_row = Label::builder()
-            .label(item.name)
-            .xalign(0.0)
-            .build();
-            let main_path_row = Label::builder()
-            .label(item.path)
-            .xalign(0.0)
-            .build();
+            let main_result_row = Label::builder().label(&item.name).xalign(0.0).build();
+            let main_path_row = Label::builder().label(&item.path).xalign(0.0).build();
             main_path_row.add_css_class("dim-label");
-            
+
             single_result_container.append(&main_result_row);
             single_result_container.append(&main_path_row);
 
             ec_clone.append(&single_result_container);
+        }
+        sb_clone.replace(fuzzy_result);
+    });
+
+    entries_container.connect_row_activated(move |_list, row| {
+        let index = row.index() as usize;
+        let entries = shared_box.borrow();
+        match entries.get(index) {
+            Some(entry) => {
+                println!("{}", entry.path)
+            }
+            None => {
+                println!("nothing")
+            }
         }
     });
 
