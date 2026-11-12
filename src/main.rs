@@ -14,8 +14,6 @@ const APP_ID: &str = "com.pietrotommasini.archspotlight";
 const IGNORED_DIRS: [&str; 4] = [".cache", ".git", "target", "node_modules"];
 
 fn main() -> glib::ExitCode {
-    // walk_directories(Path::new("/home/pietro/prova"));
-    fuzzy_test();
 
     let app = Application::builder().application_id(APP_ID).build();
     app.connect_activate(build_ui);
@@ -24,6 +22,7 @@ fn main() -> glib::ExitCode {
 }
 
 fn build_ui(app: &Application) {
+    let query_result = walk_directories(Path::new("/home/pietro/prova"));
     let container = GtkBox::builder()
         .hexpand(true)
         .margin_bottom(2)
@@ -34,9 +33,9 @@ fn build_ui(app: &Application) {
         .build();
 
     let searchbar = SearchEntry::builder().build();
-    searchbar.connect_search_changed(|entry| {
+    searchbar.connect_search_changed(move |entry| {
         let query = entry.text();
-        println!("{query}");
+        fuzzy_test(&query_result, &query);
     });
 
     container.append(&searchbar);
@@ -51,7 +50,7 @@ fn build_ui(app: &Application) {
     window.present();
 }
 
-fn walk_directories(query_path: &Path) {
+fn walk_directories(query_path: &Path) -> Vec<String> {
     let walker = WalkBuilder::new(query_path)
         .hidden(false)
         .filter_entry(|entry| {
@@ -60,25 +59,25 @@ fn walk_directories(query_path: &Path) {
                 .any(|ignored| entry.file_name() == *ignored)
         })
         .build();
+    let mut query_name_list = Vec::new();
     for item in walker {
         match item {
             Ok(res) => {
-                let res_path = res.path();
-                let res_name = res_path.display();
-                println!("{res_name}")
+                let res_name: String = res.path().display().to_string();
+                query_name_list.push(res_name)
             }
             Err(err) => {
                 println!("{err}")
             }
         }
     }
+    query_name_list
 }
 
-fn fuzzy_test() {
-    let list = ["hyprland.conf", "hyprpaper.conf", "photo_cyprus.jpg", "why_pc.txt", "chyp.txt", "README.md", "readme_vecchio.txt", "città.txt", "config.toml"];
+fn fuzzy_test(paths:&Vec<String>, query:&str) {
     let mut matcher = Matcher::new(Config::DEFAULT);
-    let pattern = Pattern::parse("citta", CaseMatching::Smart, Normalization::Smart);
-    let items = pattern.match_list(list, &mut matcher);
+    let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
+    let items = pattern.match_list(paths, &mut matcher);
     for (name, value) in items {
         println!("name: {name} score: {value}");
     }
