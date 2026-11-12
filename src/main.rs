@@ -57,7 +57,25 @@ fn build_ui(app: &Application) {
         }
         let fuzzy_result = fuzzy_search(&query_result, &query);
         for item in fuzzy_result {
-            ec_clone.append(&Label::new(Some(&item.name)));
+            let single_result_container = GtkBox::builder()
+            .orientation(Orientation::Vertical)
+            .hexpand(true)
+            .build();
+
+            let main_result_row = Label::builder()
+            .label(item.name)
+            .xalign(0.0)
+            .build();
+            let main_path_row = Label::builder()
+            .label(item.path)
+            .xalign(0.0)
+            .build();
+            main_path_row.add_css_class("dim-label");
+            
+            single_result_container.append(&main_result_row);
+            single_result_container.append(&main_path_row);
+
+            ec_clone.append(&single_result_container);
         }
     });
 
