@@ -1,18 +1,17 @@
 use gtk4::Application;
 use gtk4::ApplicationWindow;
+use gtk4::Box as GtkBox;
 use gtk4::Orientation;
 use gtk4::SearchEntry;
-use std::path::Path;
 use gtk4::glib;
 use gtk4::prelude::*;
-use gtk4::Box as GtkBox;
+use std::path::Path;
 
 const APP_ID: &str = "com.pietrotommasini.archspotlight";
 
 fn main() -> glib::ExitCode {
+    query_directories(Path::new("/home/pietro/prova"));
 
-    query_directories(Path::new("/home/pietro/Progetti/arch-spotlight"));
-    
     let app = Application::builder().application_id(APP_ID).build();
     app.connect_activate(build_ui);
 
@@ -20,15 +19,14 @@ fn main() -> glib::ExitCode {
 }
 
 fn build_ui(app: &Application) {
-    
     let container = GtkBox::builder()
-    .hexpand(true)
-    .margin_bottom(2)
-    .margin_top(2)
-    .margin_start(2)
-    .margin_end(2)
-    .orientation(Orientation::Vertical)
-    .build();
+        .hexpand(true)
+        .margin_bottom(2)
+        .margin_top(2)
+        .margin_start(2)
+        .margin_end(2)
+        .orientation(Orientation::Vertical)
+        .build();
 
     let searchbar = SearchEntry::builder().build();
     searchbar.connect_search_changed(|entry| {
@@ -37,16 +35,15 @@ fn build_ui(app: &Application) {
     });
 
     container.append(&searchbar);
-    
-    let window = ApplicationWindow::builder().application(app)
-    .default_width(700)
-    .default_height(60)
-    .build();
+
+    let window = ApplicationWindow::builder()
+        .application(app)
+        .default_width(700)
+        .default_height(60)
+        .build();
 
     window.set_child(Some(&container));
     window.present();
-
-
 }
 
 fn query_directories(query_path: &Path) {
@@ -61,20 +58,29 @@ fn query_directories(query_path: &Path) {
                             Ok(type_res) => {
                                 let is_dir = type_res.is_dir();
                                 let file_path = item_res.path();
-                                let file_path_name = file_path.display();
-                                println!("{file_path_name} cartella? {is_dir}")
-                            },
+                                let file_path_name = item_res.file_name();
+                                if file_path_name == ".cache" {
+                                    println!("ignorato");
+                                    continue;
+                                }
+                                println!("{file_path_name:?} cartella? {is_dir}");
+                                if is_dir {
+                                    query_directories(&file_path)
+                                }
+                            }
                             Err(type_err) => {
                                 println!("{type_err}")
                             }
                         }
-                    },
+                    }
                     Err(item_err) => {
                         println!("{item_err}")
                     }
                 }
             }
-        },
-        Err(err) => {println!("{err}")}
+        }
+        Err(err) => {
+            println!("{err}")
+        }
     }
 }
