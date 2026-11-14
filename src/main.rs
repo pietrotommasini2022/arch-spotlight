@@ -4,6 +4,7 @@ use gtk4::Box as GtkBox;
 use gtk4::Orientation;
 use gtk4::SearchEntry;
 use gtk4::glib;
+use gtk4::gio;
 use gtk4::prelude::*;
 use gtk4::{Label, ListBox};
 use ignore::WalkBuilder;
@@ -38,7 +39,7 @@ fn main() -> glib::ExitCode {
 }
 
 fn build_ui(app: &Application) {
-    let query_result = walk_directories(Path::new("/home/pietro/prova"));
+    let all_files = Rc::new(RefCell::new(Vec::new()));
     let container = GtkBox::builder()
         .hexpand(true)
         .margin_bottom(2)
@@ -58,6 +59,7 @@ fn build_ui(app: &Application) {
     let sb_clone = shared_box.clone();
 
     let searchbar = SearchEntry::builder().build();
+    let af_clone = all_files.clone();
     searchbar.connect_search_changed(move |entry| {
         let query = entry.text();
         ec_clone.remove_all();
@@ -65,7 +67,8 @@ fn build_ui(app: &Application) {
             sb_clone.replace(Vec::new());
             return;
         }
-        let fuzzy_result = fuzzy_search(&query_result, &query);
+        let files = af_clone.borrow();
+        let fuzzy_result = fuzzy_search(&files, &query);
         for item in &fuzzy_result {
             let single_result_container = GtkBox::builder()
                 .orientation(Orientation::Vertical)
@@ -131,6 +134,26 @@ fn build_ui(app: &Application) {
     window.set_child(Some(&container));
     searchbar.set_key_capture_widget(Some(&window));
     window.present();
+
+
+    //async walking
+    let af_clone_await = all_files.clone();
+    let sb_clone_await = searchbar.clone();
+    let waiter = gio::spawn_blocking(move || {
+        walk_directories(Path::new("/home/pietro"))
+    });
+    glib::spawn_future_local(async move {
+        let awaited_files = waiter.await;
+        match awaited_files {
+            Ok(awaited_files_list) => {
+                af_clone_await.replace(awaited_files_list);
+                sb_clone_await.emit_by_name("search-changed", &[])
+            }
+            Err(_) => {
+                println!("scan failed")
+            }
+        }
+    });
 }
 
 fn walk_directories(query_path: &Path) -> Vec<FileEntry> {
