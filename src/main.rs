@@ -106,14 +106,12 @@ fn build_ui(app: &Application) {
         }
     });
 
-    searchbar.connect_activate(move |_entry|  {
-        match ec_clone_refine.row_at_index(0) {
-            Some(res) => {
-                res.activate();
-            },
-            None => {
-                println!("no item in the list")
-            }
+    searchbar.connect_activate(move |_entry| match ec_clone_refine.row_at_index(0) {
+        Some(res) => {
+            res.activate();
+        }
+        None => {
+            println!("no item in the list")
         }
     });
 
