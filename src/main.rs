@@ -1,6 +1,17 @@
+// =====================================================================
+// arch-spotlight: barra di ricerca file in stile Spotlight (Rust + GTK4)
+//
+// Flusso generale:
+//   1. all'avvio carica la lista file dalla CACHE su disco (veloce)
+//   2. apre subito la finestra con la barra di ricerca
+//   3. in un thread separato scansiona davvero la home e riscrive la cache
+//   4. a ogni tasto premuto fa una ricerca fuzzy sui nomi dei file
+//   5. Invio / click apre il file con xdg-open, Esc chiude l'app
+// =====================================================================
+
 use gtk4::Application;
 use gtk4::ApplicationWindow;
-use gtk4::Box as GtkBox;
+use gtk4::Box as GtkBox; // rinominato: `Box` esiste già in Rust (è un'altra cosa)
 use gtk4::Orientation;
 use gtk4::SearchEntry;
 use gtk4::gio;
@@ -14,35 +25,79 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::process::Command;
 use std::rc::Rc;
-use std::time::Instant;
 
+// ---------------------------------------------------------------------
+// Costanti (diventeranno configurabili nella tappa 9)
+// ---------------------------------------------------------------------
+
+/// Identificativo univoco dell'applicazione per GTK.
 const APP_ID: &str = "com.pietrotommasini.archspotlight";
+
+/// Cartelle da NON esplorare durante la scansione (denylist).
+/// Non saltiamo tutte le cartelle nascoste perché, per esempio, .config ci interessa.
 const IGNORED_DIRS: [&str; 4] = [".cache", ".git", "target", "node_modules"];
+
+/// Quanti risultati mostrare al massimo nella lista.
 const MAX_RESULTS: usize = 10;
+
+/// File di cache: un path per riga (il nome si ricava dal path).
 const CACHE_PATH: &str = "/home/pietro/.cache/arch-spotlight-index.txt";
 
+// ---------------------------------------------------------------------
+// Tipi
+// ---------------------------------------------------------------------
+
+/// Un file trovato sul disco.
+/// - `name`: solo il nome (es. "note.txt"), usato per la ricerca fuzzy
+/// - `path`: percorso completo, usato per mostrarlo e per aprire il file
 #[derive(Debug, Clone)]
 struct FileEntry {
     name: String,
     path: String,
 }
 
+/// nucleo-matcher ha bisogno di "vedere" ogni elemento come testo (&str).
+/// Qui gli diciamo: per una FileEntry, il testo su cui cercare è il NOME.
 impl AsRef<str> for FileEntry {
     fn as_ref(&self) -> &str {
         &self.name
     }
 }
 
+// ---------------------------------------------------------------------
+// Avvio
+// ---------------------------------------------------------------------
+
 fn main() -> glib::ExitCode {
     let app = Application::builder().application_id(APP_ID).build();
+    // Quando l'app è pronta, GTK chiama build_ui per costruire la finestra.
     app.connect_activate(build_ui);
-
+    // Avvia il main loop: da qui in poi il programma reagisce agli eventi.
     app.run()
 }
 
+/// Costruisce la finestra e collega tutti i segnali (eventi).
 fn build_ui(app: &Application) {
+    // -----------------------------------------------------------------
+    // Stato condiviso
+    // -----------------------------------------------------------------
+    // Rc<RefCell<...>> = una scatola condivisa tra più closure (Rc)
+    // il cui contenuto si può modificare anche se condivisa (RefCell).
+
+    // TUTTI i file conosciuti: parte dalla cache, poi viene sostituita
+    // dal risultato della scansione in background.
     let all_files = Rc::new(RefCell::new(load_cache()));
-    let container = GtkBox::builder()
+
+    // Solo i file attualmente MOSTRATI nella lista dei risultati,
+    // nello stesso ordine delle righe: la riga N corrisponde a visible_results[N].
+    let visible_results = Rc::new(RefCell::new(Vec::new()));
+
+    // -----------------------------------------------------------------
+    // Widget
+    // -----------------------------------------------------------------
+
+    // Contenitore principale verticale: sopra la barra, sotto i risultati.
+    let main_layout = GtkBox::builder()
         .hexpand(true)
         .margin_bottom(2)
         .margin_top(2)
@@ -51,54 +106,75 @@ fn build_ui(app: &Application) {
         .orientation(Orientation::Vertical)
         .build();
 
-    let entries_container = ListBox::builder().build();
-    let ec_clone = entries_container.clone();
-    let a_clone = app.clone();
-    let a_clone_refine = app.clone();
-    let ec_clone_refine = entries_container.clone();
-
-    let shared_box = Rc::new(RefCell::new(Vec::new()));
-    let sb_clone = shared_box.clone();
-
+    // Barra di ricerca.
     let searchbar = SearchEntry::builder().build();
-    let af_clone = all_files.clone();
+
+    // Lista verticale dei risultati (una riga per file trovato).
+    let results_list = ListBox::builder().build();
+
+    // -----------------------------------------------------------------
+    // Segnale: il testo della barra è cambiato -> nuova ricerca
+    // -----------------------------------------------------------------
+    // Ogni closure `move` si prende i propri "telecomandi" (clone),
+    // creati subito prima della closure che li usa.
+    let results_list_for_search = results_list.clone();
+    let all_files_for_search = all_files.clone();
+    let visible_results_for_search = visible_results.clone();
     searchbar.connect_search_changed(move |entry| {
         let query = entry.text();
-        ec_clone.remove_all();
+
+        // Svuota la lista grafica prima di riempirla con i nuovi risultati.
+        results_list_for_search.remove_all();
+
+        // Barra vuota: nessun risultato da mostrare.
         if query.is_empty() {
-            sb_clone.replace(Vec::new());
+            visible_results_for_search.replace(Vec::new());
             return;
         }
-        let files = af_clone.borrow();
-        let fuzzy_result = fuzzy_search(&files, &query);
-        for item in &fuzzy_result {
-            let single_result_container = GtkBox::builder()
+
+        // borrow() = guardo dentro la scatola senza modificarla.
+        let files = all_files_for_search.borrow();
+        let matches = fuzzy_search(&files, &query);
+
+        // Per ogni risultato crea una riga: nome sopra, path (grigio) sotto.
+        for file in &matches {
+            let row_layout = GtkBox::builder()
                 .orientation(Orientation::Vertical)
                 .hexpand(true)
                 .build();
 
-            let main_result_row = Label::builder().label(&item.name).xalign(0.0).build();
-            let main_path_row = Label::builder().label(&item.path).xalign(0.0).build();
-            main_path_row.add_css_class("dim-label");
+            let name_label = Label::builder().label(&file.name).xalign(0.0).build();
+            let path_label = Label::builder().label(&file.path).xalign(0.0).build();
+            path_label.add_css_class("dim-label"); // stile GTK per testo attenuato
 
-            single_result_container.append(&main_result_row);
-            single_result_container.append(&main_path_row);
+            row_layout.append(&name_label);
+            row_layout.append(&path_label);
 
-            ec_clone.append(&single_result_container);
+            results_list_for_search.append(&row_layout);
         }
-        sb_clone.replace(fuzzy_result);
+
+        // Ricorda quali file sono in lista, così il click sa cosa aprire.
+        visible_results_for_search.replace(matches);
     });
 
-    entries_container.connect_row_activated(move |_list, row| {
-        let index = row.index() as usize;
-        let entries = shared_box.borrow();
-        match entries.get(index) {
-            Some(entry) => {
-                let open_cmd = Command::new("xdg-open").arg(&entry.path).spawn();
+    // -----------------------------------------------------------------
+    // Segnale: una riga è stata attivata (click o Invio) -> apri il file
+    // -----------------------------------------------------------------
+    let app_for_open = app.clone();
+    results_list.connect_row_activated(move |_list, row| {
+        // Posizione della riga cliccata (GTK usa i32, Vec::get vuole usize).
+        let row_index = row.index() as usize;
+        let results = visible_results.borrow();
 
-                match open_cmd {
-                    Ok(_res) => {
-                        a_clone.quit();
+        // get() restituisce Option: None se l'indice non esiste.
+        match results.get(row_index) {
+            Some(file) => {
+                // Lancia xdg-open, che apre il file con il programma predefinito.
+                let open_result = Command::new("xdg-open").arg(&file.path).spawn();
+
+                match open_result {
+                    Ok(_child_process) => {
+                        app_for_open.quit(); // file aperto: chiudiamo la barra
                     }
                     Err(err) => {
                         println!("{err}")
@@ -111,21 +187,33 @@ fn build_ui(app: &Application) {
         }
     });
 
-    searchbar.connect_activate(move |_entry| match ec_clone_refine.row_at_index(0) {
-        Some(res) => {
-            res.activate();
+    // -----------------------------------------------------------------
+    // Segnale: Invio nella barra -> attiva il primo risultato
+    // -----------------------------------------------------------------
+    // Riusa il segnale row_activated qui sopra, senza duplicare codice.
+    let results_list_for_enter = results_list.clone();
+    searchbar.connect_activate(move |_entry| match results_list_for_enter.row_at_index(0) {
+        Some(first_row) => {
+            first_row.activate();
         }
         None => {
             println!("no item in the list")
         }
     });
 
+    // -----------------------------------------------------------------
+    // Segnale: Esc nella barra -> chiudi l'app
+    // -----------------------------------------------------------------
+    let app_for_escape = app.clone();
     searchbar.connect_stop_search(move |_searchbar| {
-        a_clone_refine.quit();
+        app_for_escape.quit();
     });
 
-    container.append(&searchbar);
-    container.append(&entries_container);
+    // -----------------------------------------------------------------
+    // Montaggio della finestra
+    // -----------------------------------------------------------------
+    main_layout.append(&searchbar);
+    main_layout.append(&results_list);
 
     let window = ApplicationWindow::builder()
         .application(app)
@@ -133,30 +221,49 @@ fn build_ui(app: &Application) {
         .default_height(60)
         .build();
 
-    window.set_child(Some(&container));
+    window.set_child(Some(&main_layout));
+    // Qualsiasi tasto premuto nella finestra finisce nella barra di ricerca.
     searchbar.set_key_capture_widget(Some(&window));
+    // present() non disegna subito: mette in coda, il main loop la mostrerà.
     window.present();
 
-    //async walking
-    let af_clone_await = all_files.clone();
-    let sb_clone_await = searchbar.clone();
-    let waiter = gio::spawn_blocking(move || {
-        let files = walk_directories(Path::new("/home/pietro"));
-        let cached_file = build_cache_text(&files);
-        match std::fs::write(CACHE_PATH, cached_file) {
+    // -----------------------------------------------------------------
+    // Scansione in background + aggiornamento della cache
+    // -----------------------------------------------------------------
+    // spawn_blocking: la closure gira in un ALTRO thread (la "cucina"),
+    // così la finestra resta reattiva. Restituisce subito uno "scontrino".
+    // Qui dentro NON si possono usare Rc/RefCell né widget: vivono solo
+    // sul thread della UI.
+    let scan_task = gio::spawn_blocking(move || {
+        let scanned_files = walk_directories(Path::new("/home/pietro"));
+
+        // Salva la cache per il prossimo avvio. &scanned_files = in prestito,
+        // così la lista resta nostra e possiamo restituirla alla fine.
+        let cache_text = build_cache_text(&scanned_files);
+        match std::fs::write(CACHE_PATH, cache_text) {
             Ok(_) => {}
             Err(err) => {
                 println!("{err}")
             }
         };
-        return files;
+
+        // Ultima espressione senza `;` = valore restituito dalla closure.
+        scanned_files
     });
+
+    // spawn_future_local: codice async sul thread della UI ("local").
+    // .await aspetta lo scontrino SENZA bloccare l'interfaccia.
+    // Tutto quello che viene dopo .await gira sul thread della UI.
+    let all_files_for_scan = all_files.clone();
+    let searchbar_for_scan = searchbar.clone();
     glib::spawn_future_local(async move {
-        let awaited_files = waiter.await;
-        match awaited_files {
-            Ok(awaited_files_list) => {
-                af_clone_await.replace(awaited_files_list);
-                sb_clone_await.emit_by_name("search-changed", &[])
+        let scan_result = scan_task.await;
+        match scan_result {
+            Ok(scanned_files) => {
+                // Sostituisce la lista vecchia (dalla cache) con quella fresca.
+                all_files_for_scan.replace(scanned_files);
+                // Rifà la ricerca, nel caso l'utente abbia già scritto qualcosa.
+                searchbar_for_scan.emit_by_name("search-changed", &[])
             }
             Err(_) => {
                 println!("scan failed")
@@ -165,73 +272,96 @@ fn build_ui(app: &Application) {
     });
 }
 
-fn walk_directories(query_path: &Path) -> Vec<FileEntry> {
-    let walker = WalkBuilder::new(query_path)
-        .hidden(false)
-        .filter_entry(|entry| {
+// ---------------------------------------------------------------------
+// Funzioni di supporto
+// ---------------------------------------------------------------------
+
+/// Esplora ricorsivamente `root` e restituisce tutti i file e le cartelle
+/// trovati, saltando quelle in IGNORED_DIRS.
+fn walk_directories(root: &Path) -> Vec<FileEntry> {
+    let walker = WalkBuilder::new(root)
+        .hidden(false) // includi anche i file nascosti (.config ecc.)
+        // filter_entry: se la closure restituisce false, la cartella
+        // (e tutto il suo contenuto) viene saltata.
+        .filter_entry(|dir_entry| {
             !IGNORED_DIRS
                 .iter()
-                .any(|ignored| entry.file_name() == *ignored)
+                .any(|ignored| dir_entry.file_name() == *ignored)
         })
         .build();
-    let mut query_name_list = Vec::new();
-    for item in walker {
-        match item {
-            Ok(res) => {
-                let name = res.file_name().to_string_lossy().to_string();
-                let path = res.path().display().to_string();
-                let entry = FileEntry {
+
+    let mut found_files = Vec::new();
+    for walk_result in walker {
+        // Ogni elemento è un Result: può fallire (es. permessi negati).
+        match walk_result {
+            Ok(dir_entry) => {
+                let name = dir_entry.file_name().to_string_lossy().to_string();
+                let path = dir_entry.path().display().to_string();
+                found_files.push(FileEntry {
                     name: name,
                     path: path,
-                };
-                query_name_list.push(entry)
+                })
             }
             Err(err) => {
                 println!("{err}")
             }
         }
     }
-    query_name_list
+    found_files
 }
 
-fn fuzzy_search(paths: &Vec<FileEntry>, query: &str) -> Vec<FileEntry> {
+/// Ricerca fuzzy di `query` sui nomi dei file.
+/// Restituisce al massimo MAX_RESULTS file, dal più al meno pertinente.
+fn fuzzy_search(files: &Vec<FileEntry>, query: &str) -> Vec<FileEntry> {
     let mut matcher = Matcher::new(Config::DEFAULT);
+    // Smart: maiuscole/minuscole e accenti ignorati, a meno che la query li usi.
     let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
-    let mut items = pattern.match_list(paths, &mut matcher);
-    items.truncate(MAX_RESULTS);
-    let mut res = Vec::new();
-    for (entry, _score) in items {
-        res.push(entry.clone())
+
+    // match_list restituisce coppie (file, punteggio), già ordinate per punteggio.
+    let mut scored_matches = pattern.match_list(files, &mut matcher);
+    scored_matches.truncate(MAX_RESULTS);
+
+    // Teniamo solo i file (senza punteggio), clonati: match_list ci dà
+    // riferimenti alla lista originale, ma a noi servono copie nostre.
+    let mut best_matches = Vec::new();
+    for (file, _score) in scored_matches {
+        best_matches.push(file.clone())
     }
-    res
+    best_matches
 }
 
-fn build_cache_text(entries: &Vec<FileEntry>) -> String {
+/// Trasforma la lista di file nel testo da salvare in cache:
+/// un path per riga.
+fn build_cache_text(files: &Vec<FileEntry>) -> String {
     let mut cache_text = String::new();
-    for entry in entries {
-        cache_text.push_str(&entry.path);
+    for file in files {
+        cache_text.push_str(&file.path);
         cache_text.push('\n');
     }
     cache_text
 }
 
+/// Legge la cache dal disco e ricostruisce la lista di file.
+/// Se la cache non esiste (es. primo avvio) restituisce una lista vuota.
 fn load_cache() -> Vec<FileEntry> {
-    let cache = std::fs::read_to_string(CACHE_PATH);
-    match cache {
+    match std::fs::read_to_string(CACHE_PATH) {
         Ok(cache_text) => {
-            let mut cache_read_text = Vec::new();
-            for cache_text_line in cache_text.lines() {
-                let cache_line_name = match Path::new(cache_text_line).file_name() {
-                    Some(name) => name.to_string_lossy().to_string(),
-                    None => continue,
+            let mut loaded_files = Vec::new();
+            for line in cache_text.lines() {
+                // Il nome è l'ultimo pezzo del path. file_name() restituisce
+                // Option perché alcuni path (es. "/") non ne hanno uno.
+                let name = match Path::new(line).file_name() {
+                    Some(file_name) => file_name.to_string_lossy().to_string(),
+                    None => continue, // riga strana: saltala
                 };
-                cache_read_text.push(FileEntry {
-                    name: cache_line_name,
-                    path: cache_text_line.to_string(),
+                loaded_files.push(FileEntry {
+                    name: name,
+                    path: line.to_string(),
                 });
             }
-            cache_read_text
+            loaded_files
         }
-        Err(_) => return Vec::new(),
+        // Nessuna cache: va bene, ci penserà la scansione in background.
+        Err(_) => Vec::new(),
     }
 }
