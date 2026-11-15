@@ -3,8 +3,8 @@ use gtk4::ApplicationWindow;
 use gtk4::Box as GtkBox;
 use gtk4::Orientation;
 use gtk4::SearchEntry;
-use gtk4::glib;
 use gtk4::gio;
+use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4::{Label, ListBox};
 use ignore::WalkBuilder;
@@ -18,6 +18,7 @@ use std::rc::Rc;
 const APP_ID: &str = "com.pietrotommasini.archspotlight";
 const IGNORED_DIRS: [&str; 4] = [".cache", ".git", "target", "node_modules"];
 const MAX_RESULTS: usize = 10;
+const CACHE_PATH: &str = "/home/pietro/.cache/arch-spotlight-index.txt";
 
 #[derive(Debug, Clone)]
 struct FileEntry {
@@ -39,7 +40,7 @@ fn main() -> glib::ExitCode {
 }
 
 fn build_ui(app: &Application) {
-    let all_files = Rc::new(RefCell::new(Vec::new()));
+    let all_files = Rc::new(RefCell::new(load_cache()));
     let container = GtkBox::builder()
         .hexpand(true)
         .margin_bottom(2)
@@ -135,17 +136,21 @@ fn build_ui(app: &Application) {
     searchbar.set_key_capture_widget(Some(&window));
     window.present();
 
-
     //async walking
     let af_clone_await = all_files.clone();
     let sb_clone_await = searchbar.clone();
-    let waiter = gio::spawn_blocking(move || {
-        walk_directories(Path::new("/home/pietro"))
-    });
+    let waiter = gio::spawn_blocking(move || walk_directories(Path::new("/home/pietro")));
     glib::spawn_future_local(async move {
         let awaited_files = waiter.await;
         match awaited_files {
             Ok(awaited_files_list) => {
+                let cached_text = build_cache_text(&awaited_files_list);
+                match std::fs::write(CACHE_PATH, &cached_text) {
+                    Ok(_) => {}
+                    Err(err) => {
+                        println!("{err}")
+                    }
+                };
                 af_clone_await.replace(awaited_files_list);
                 sb_clone_await.emit_by_name("search-changed", &[])
             }
@@ -195,4 +200,34 @@ fn fuzzy_search(paths: &Vec<FileEntry>, query: &str) -> Vec<FileEntry> {
         res.push(entry.clone())
     }
     res
+}
+
+fn build_cache_text(entries: &Vec<FileEntry>) -> String {
+    let mut cache_text = String::new();
+    for entry in entries {
+        cache_text.push_str(&entry.path);
+        cache_text.push('\n');
+    }
+    cache_text
+}
+
+fn load_cache() -> Vec<FileEntry> {
+    let cache = std::fs::read_to_string(CACHE_PATH);
+    match cache {
+        Ok(cache_text) => {
+            let mut cache_read_text = Vec::new();
+            for cache_text_line in cache_text.lines() {
+                let cache_line_name = match Path::new(cache_text_line).file_name() {
+                    Some(name) => name.to_string_lossy().to_string(),
+                    None => continue,
+                };
+                cache_read_text.push(FileEntry {
+                    name: cache_line_name,
+                    path: cache_text_line.to_string(),
+                });
+            }
+            cache_read_text
+        }
+        Err(_) => return Vec::new(),
+    }
 }
