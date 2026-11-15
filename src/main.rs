@@ -21,6 +21,7 @@ use gtk4::{Label, ListBox};
 use ignore::WalkBuilder;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
+use serde::Deserialize;
 use std::cell::RefCell;
 use std::path::Path;
 use std::process::Command;
@@ -40,8 +41,6 @@ const IGNORED_DIRS: [&str; 4] = [".cache", ".git", "target", "node_modules"];
 /// Quanti risultati mostrare al massimo nella lista.
 const MAX_RESULTS: usize = 10;
 
-/// File di cache: un path per riga (il nome si ricava dal path).
-const CACHE_PATH: &str = "/home/pietro/.cache/arch-spotlight-index.txt";
 
 // ---------------------------------------------------------------------
 // Tipi
@@ -64,6 +63,14 @@ impl AsRef<str> for FileEntry {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct ConfigVar {
+    ignored_dirs: Vec<String>,
+    max_results: usize,
+    show_hidden: bool,
+    main_dir: String,
+}
+
 // ---------------------------------------------------------------------
 // Avvio
 // ---------------------------------------------------------------------
@@ -78,6 +85,7 @@ fn main() -> glib::ExitCode {
 
 /// Costruisce la finestra e collega tutti i segnali (eventi).
 fn build_ui(app: &Application) {
+    let config = load_config();
     // -----------------------------------------------------------------
     // Stato condiviso
     // -----------------------------------------------------------------
@@ -134,7 +142,7 @@ fn build_ui(app: &Application) {
 
         // borrow() = guardo dentro la scatola senza modificarla.
         let files = all_files_for_search.borrow();
-        let matches = fuzzy_search(&files, &query);
+        let matches = fuzzy_search(&files, &query, config.max_results);
 
         // Per ogni risultato crea una riga: nome sopra, path (grigio) sotto.
         for file in &matches {
@@ -235,12 +243,12 @@ fn build_ui(app: &Application) {
     // Qui dentro NON si possono usare Rc/RefCell né widget: vivono solo
     // sul thread della UI.
     let scan_task = gio::spawn_blocking(move || {
-        let scanned_files = walk_directories(Path::new("/home/pietro"));
+        let scanned_files = walk_directories(Path::new(&config.main_dir), config.show_hidden, config.ignored_dirs);
 
         // Salva la cache per il prossimo avvio. &scanned_files = in prestito,
         // così la lista resta nostra e possiamo restituirla alla fine.
         let cache_text = build_cache_text(&scanned_files);
-        match std::fs::write(CACHE_PATH, cache_text) {
+        match std::fs::write(cache_path(), cache_text) {
             Ok(_) => {}
             Err(err) => {
                 println!("{err}")
@@ -278,15 +286,15 @@ fn build_ui(app: &Application) {
 
 /// Esplora ricorsivamente `root` e restituisce tutti i file e le cartelle
 /// trovati, saltando quelle in IGNORED_DIRS.
-fn walk_directories(root: &Path) -> Vec<FileEntry> {
+fn walk_directories(root: &Path, show_hidden: bool, ignored_dirs: Vec<String>) -> Vec<FileEntry> {
     let walker = WalkBuilder::new(root)
-        .hidden(false) // includi anche i file nascosti (.config ecc.)
+        .hidden(!show_hidden) // includi anche i file nascosti (.config ecc.)
         // filter_entry: se la closure restituisce false, la cartella
         // (e tutto il suo contenuto) viene saltata.
-        .filter_entry(|dir_entry| {
-            !IGNORED_DIRS
+        .filter_entry(move|dir_entry| {
+            !ignored_dirs
                 .iter()
-                .any(|ignored| dir_entry.file_name() == *ignored)
+                .any(|ignored| *dir_entry.file_name() == **ignored)
         })
         .build();
 
@@ -312,14 +320,14 @@ fn walk_directories(root: &Path) -> Vec<FileEntry> {
 
 /// Ricerca fuzzy di `query` sui nomi dei file.
 /// Restituisce al massimo MAX_RESULTS file, dal più al meno pertinente.
-fn fuzzy_search(files: &Vec<FileEntry>, query: &str) -> Vec<FileEntry> {
+fn fuzzy_search(files: &Vec<FileEntry>, query: &str, max_results: usize) -> Vec<FileEntry> {
     let mut matcher = Matcher::new(Config::DEFAULT);
     // Smart: maiuscole/minuscole e accenti ignorati, a meno che la query li usi.
     let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
 
     // match_list restituisce coppie (file, punteggio), già ordinate per punteggio.
     let mut scored_matches = pattern.match_list(files, &mut matcher);
-    scored_matches.truncate(MAX_RESULTS);
+    scored_matches.truncate(max_results);
 
     // Teniamo solo i file (senza punteggio), clonati: match_list ci dà
     // riferimenti alla lista originale, ma a noi servono copie nostre.
@@ -344,7 +352,7 @@ fn build_cache_text(files: &Vec<FileEntry>) -> String {
 /// Legge la cache dal disco e ricostruisce la lista di file.
 /// Se la cache non esiste (es. primo avvio) restituisce una lista vuota.
 fn load_cache() -> Vec<FileEntry> {
-    match std::fs::read_to_string(CACHE_PATH) {
+    match std::fs::read_to_string(cache_path()) {
         Ok(cache_text) => {
             let mut loaded_files = Vec::new();
             for line in cache_text.lines() {
@@ -364,4 +372,56 @@ fn load_cache() -> Vec<FileEntry> {
         // Nessuna cache: va bene, ci penserà la scansione in background.
         Err(_) => Vec::new(),
     }
+}
+
+fn load_config() -> ConfigVar {
+    let config_file = std::fs::read_to_string(config_path());
+    match config_file {
+        Ok(config_text) => {
+            let read_text = toml::from_str::<ConfigVar>(&config_text);
+            match read_text {
+                Ok(config) => {
+                    config
+                }
+                Err(err) => {
+                    println!("{err}");
+                    default_config()
+                }
+            }
+        }
+        Err(err) => {
+            println!("{err}");
+            default_config()
+        }
+    }
+}
+
+fn default_config() -> ConfigVar {
+    ConfigVar {
+        ignored_dirs: IGNORED_DIRS.iter().map(|item| item.to_string()).collect(),
+        max_results: MAX_RESULTS,
+        show_hidden: true,
+        main_dir: home_dir(),
+    }
+}
+
+fn home_dir() -> String {
+    match std::env::var("HOME") {
+        Ok(home) => {
+            home
+        }
+        Err(_) => {
+            "/tmp".to_string()
+        }
+    }
+}
+
+fn config_path() -> String {
+    let config_path = format!("{}/.config/arch-spotlight/config.toml", home_dir());
+    return config_path
+}
+
+fn cache_path() -> String {
+    let cache_path = format!("{}/.cache/arch-spotlight-index.txt", home_dir());
+    return cache_path
 }
