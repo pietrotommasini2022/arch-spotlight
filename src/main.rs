@@ -14,6 +14,7 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::process::Command;
 use std::rc::Rc;
+use std::time::Instant;
 
 const APP_ID: &str = "com.pietrotommasini.archspotlight";
 const IGNORED_DIRS: [&str; 4] = [".cache", ".git", "target", "node_modules"];
@@ -139,18 +140,21 @@ fn build_ui(app: &Application) {
     //async walking
     let af_clone_await = all_files.clone();
     let sb_clone_await = searchbar.clone();
-    let waiter = gio::spawn_blocking(move || walk_directories(Path::new("/home/pietro")));
+    let waiter = gio::spawn_blocking(move || {
+        let files = walk_directories(Path::new("/home/pietro"));
+        let cached_file = build_cache_text(&files);
+        match std::fs::write(CACHE_PATH, cached_file) {
+            Ok(_) => {}
+            Err(err) => {
+                println!("{err}")
+            }
+        };
+        return files;
+    });
     glib::spawn_future_local(async move {
         let awaited_files = waiter.await;
         match awaited_files {
             Ok(awaited_files_list) => {
-                let cached_text = build_cache_text(&awaited_files_list);
-                match std::fs::write(CACHE_PATH, &cached_text) {
-                    Ok(_) => {}
-                    Err(err) => {
-                        println!("{err}")
-                    }
-                };
                 af_clone_await.replace(awaited_files_list);
                 sb_clone_await.emit_by_name("search-changed", &[])
             }
