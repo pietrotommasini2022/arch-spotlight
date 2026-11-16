@@ -167,6 +167,13 @@ fn build_ui(app: &Application) {
                 let guess = gio::content_type_guess(Some(&file.path), None::<&[u8]>);
                 guess.0.to_string()
             };
+            let icon = gio::content_type_get_icon(&file_type);
+            let icon_image = gtk4::Image::builder().gicon(&icon).pixel_size(32).build();
+            let row_container = GtkBox::builder()
+                .orientation(Orientation::Horizontal)
+                .hexpand(true)
+                .spacing(10)
+                .build();
             let row_layout = GtkBox::builder()
                 .orientation(Orientation::Vertical)
                 .hexpand(true)
@@ -179,8 +186,10 @@ fn build_ui(app: &Application) {
 
             row_layout.append(&name_label);
             row_layout.append(&path_label);
+            row_container.append(&icon_image);
+            row_container.append(&row_layout);
 
-            results_list_for_search.append(&row_layout);
+            results_list_for_search.append(&row_container);
         }
 
         // Ricorda quali file sono in lista, così il click sa cosa aprire.
