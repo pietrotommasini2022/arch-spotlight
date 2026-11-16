@@ -5,4 +5,14 @@ pkgdesc='Fuzzy file search launcher for Wayland'
 arch=('x86_64')
 license=('MIT')
 depends=('gtk4-layer-shell' 'gtk4')
-makedepends=('cargo')
+makedepends=('cargo' 'git')
+source=("arch-spotlight::git+https://github.com/pietrotommasini2022/arch-spotlight.git")
+sha256sums=('SKIP')
+build() {
+    cd "$srcdir/arch-spotlight"
+    cargo build --release --locked
+}
+package() {
+    cd "$srcdir/arch-spotlight"
+    install -Dm755 "target/release/arch-spotlight" "$pkgdir/usr/bin/arch-spotlight"
+}
