@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 gtk4 = { version = "0.11.5", features = ["v4_12"] }
+gtk4-layer-shell = "0.8.1"
 ignore = "0.4.34"
 nucleo-matcher = "0.3.1"
 serde = { version = "1.0.229", features = ["derive"] }

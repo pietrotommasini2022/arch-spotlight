@@ -18,6 +18,7 @@ use gtk4::gio;
 use gtk4::glib;
 use gtk4::prelude::*;
 use gtk4::{Label, ListBox};
+use gtk4_layer_shell::{LayerShell, KeyboardMode, Layer, Edge};
 use ignore::WalkBuilder;
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher};
@@ -179,8 +180,16 @@ fn build_ui(app: &Application) {
                 .hexpand(true)
                 .build();
 
-            let name_label = Label::builder().label(&file.name).xalign(0.0).build();
-            let path_label = Label::builder().label(&file.path).xalign(0.0).build();
+            let name_label = Label::builder()
+                .label(&file.name)
+                .xalign(0.0)
+                .ellipsize(gtk4::pango::EllipsizeMode::End)
+                .build();
+            let path_label = Label::builder()
+                .label(&file.path)
+                .xalign(0.0)
+                .ellipsize(gtk4::pango::EllipsizeMode::Start)
+                .build();
             path_label.add_css_class("path_label"); // stile GTK per testo attenuato
             name_label.add_css_class("name_label");
 
@@ -265,6 +274,11 @@ fn build_ui(app: &Application) {
     searchbar.set_key_capture_widget(Some(&window));
     // present() non disegna subito: mette in coda, il main loop la mostrerà.
     load_css(&window, &config);
+    window.init_layer_shell();
+    window.set_keyboard_mode(KeyboardMode::Exclusive);
+    window.set_layer(Layer::Overlay);
+    window.set_anchor(Edge::Top, true);
+    window.set_margin(Edge::Top, 100);
     window.present();
 
     // -----------------------------------------------------------------
