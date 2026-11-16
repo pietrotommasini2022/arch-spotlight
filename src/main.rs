@@ -41,7 +41,6 @@ const IGNORED_DIRS: [&str; 4] = [".cache", ".git", "target", "node_modules"];
 /// Quanti risultati mostrare al massimo nella lista.
 const MAX_RESULTS: usize = 10;
 
-
 // ---------------------------------------------------------------------
 // Tipi
 // ---------------------------------------------------------------------
@@ -53,6 +52,7 @@ const MAX_RESULTS: usize = 10;
 struct FileEntry {
     name: String,
     path: String,
+    is_dir: bool,
 }
 
 /// nucleo-matcher ha bisogno di "vedere" ogni elemento come testo (&str).
@@ -75,11 +75,12 @@ struct ConfigVar {
 
 impl Default for ConfigVar {
     fn default() -> Self {
-        ConfigVar { ignored_dirs: IGNORED_DIRS.iter().map(|item| item.to_string()).collect(),
-        max_results: MAX_RESULTS,
-        show_hidden: true,
-        main_dir: home_dir(),
-        style_path: style_path(),
+        ConfigVar {
+            ignored_dirs: IGNORED_DIRS.iter().map(|item| item.to_string()).collect(),
+            max_results: MAX_RESULTS,
+            show_hidden: true,
+            main_dir: home_dir(),
+            style_path: style_path(),
         }
     }
 }
@@ -160,6 +161,12 @@ fn build_ui(app: &Application) {
 
         // Per ogni risultato crea una riga: nome sopra, path (grigio) sotto.
         for file in &matches {
+            let file_type = if file.is_dir {
+                "inode/directory".to_string()
+            } else {
+                let guess = gio::content_type_guess(Some(&file.path), None::<&[u8]>);
+                guess.0.to_string()
+            };
             let row_layout = GtkBox::builder()
                 .orientation(Orientation::Vertical)
                 .hexpand(true)
@@ -259,7 +266,11 @@ fn build_ui(app: &Application) {
     // Qui dentro NON si possono usare Rc/RefCell né widget: vivono solo
     // sul thread della UI.
     let scan_task = gio::spawn_blocking(move || {
-        let scanned_files = walk_directories(Path::new(&config.main_dir), config.show_hidden, config.ignored_dirs);
+        let scanned_files = walk_directories(
+            Path::new(&config.main_dir),
+            config.show_hidden,
+            config.ignored_dirs,
+        );
 
         // Salva la cache per il prossimo avvio. &scanned_files = in prestito,
         // così la lista resta nostra e possiamo restituirla alla fine.
@@ -307,7 +318,7 @@ fn walk_directories(root: &Path, show_hidden: bool, ignored_dirs: Vec<String>) -
         .hidden(!show_hidden) // includi anche i file nascosti (.config ecc.)
         // filter_entry: se la closure restituisce false, la cartella
         // (e tutto il suo contenuto) viene saltata.
-        .filter_entry(move|dir_entry| {
+        .filter_entry(move |dir_entry| {
             !ignored_dirs
                 .iter()
                 .any(|ignored| *dir_entry.file_name() == **ignored)
@@ -321,10 +332,11 @@ fn walk_directories(root: &Path, show_hidden: bool, ignored_dirs: Vec<String>) -
             Ok(dir_entry) => {
                 let name = dir_entry.file_name().to_string_lossy().to_string();
                 let path = dir_entry.path().display().to_string();
-                found_files.push(FileEntry {
-                    name: name,
-                    path: path,
-                })
+                let is_dir: bool = match dir_entry.file_type() {
+                    Some(res) => res.is_dir(),
+                    None => false,
+                };
+                found_files.push(FileEntry { name, path, is_dir })
             }
             Err(err) => {
                 println!("{err}")
@@ -360,6 +372,9 @@ fn build_cache_text(files: &Vec<FileEntry>) -> String {
     let mut cache_text = String::new();
     for file in files {
         cache_text.push_str(&file.path);
+        if file.is_dir {
+            cache_text.push('/');
+        }
         cache_text.push('\n');
     }
     cache_text
@@ -374,13 +389,18 @@ fn load_cache() -> Vec<FileEntry> {
             for line in cache_text.lines() {
                 // Il nome è l'ultimo pezzo del path. file_name() restituisce
                 // Option perché alcuni path (es. "/") non ne hanno uno.
-                let name = match Path::new(line).file_name() {
+                let (clean_path, is_dir) = match line.strip_suffix('/') {
+                    Some(clean_line) => (clean_line.to_string(), true),
+                    None => (line.to_string(), false),
+                };
+                let name = match Path::new(&clean_path).file_name() {
                     Some(file_name) => file_name.to_string_lossy().to_string(),
                     None => continue, // riga strana: saltala
                 };
                 loaded_files.push(FileEntry {
                     name: name,
-                    path: line.to_string(),
+                    path: clean_path,
+                    is_dir: is_dir,
                 });
             }
             loaded_files
@@ -396,9 +416,7 @@ fn load_config() -> ConfigVar {
         Ok(config_text) => {
             let read_text = toml::from_str::<ConfigVar>(&config_text);
             match read_text {
-                Ok(config) => {
-                    config
-                }
+                Ok(config) => config,
                 Err(err) => {
                     println!("{err}");
                     ConfigVar::default()
@@ -414,28 +432,24 @@ fn load_config() -> ConfigVar {
 
 fn home_dir() -> String {
     match std::env::var("HOME") {
-        Ok(home) => {
-            home
-        }
-        Err(_) => {
-            "/tmp".to_string()
-        }
+        Ok(home) => home,
+        Err(_) => "/tmp".to_string(),
     }
 }
 
 fn config_path() -> String {
     let config_path = format!("{}/.config/arch-spotlight/config.toml", home_dir());
-    return config_path
+    return config_path;
 }
 
 fn cache_path() -> String {
     let cache_path = format!("{}/.cache/arch-spotlight-index.txt", home_dir());
-    return cache_path
+    return cache_path;
 }
 
 fn style_path() -> String {
     let style_path = format!("{}/.config/arch-spotlight/style.css", home_dir());
-    return style_path
+    return style_path;
 }
 
 fn load_css(window: &ApplicationWindow, config: &ConfigVar) {
@@ -444,7 +458,11 @@ fn load_css(window: &ApplicationWindow, config: &ConfigVar) {
     match std::fs::read_to_string(css_path) {
         Ok(css_info) => {
             css_provider.load_from_string(&css_info);
-            gtk4::style_context_add_provider_for_display(&RootExt::display(window), &css_provider, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION)
+            gtk4::style_context_add_provider_for_display(
+                &RootExt::display(window),
+                &css_provider,
+                gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            )
         }
         Err(_) => {
             println!("couldn't find the style.css file")
