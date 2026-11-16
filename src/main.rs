@@ -100,6 +100,10 @@ fn main() -> glib::ExitCode {
 
 /// Costruisce la finestra e collega tutti i segnali (eventi).
 fn build_ui(app: &Application) {
+    if app.active_window().is_some() {
+        app.quit();
+        return
+    }
     let config = load_config();
     // -----------------------------------------------------------------
     // Stato condiviso
