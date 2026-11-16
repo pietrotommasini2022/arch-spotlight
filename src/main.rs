@@ -72,6 +72,7 @@ struct ConfigVar {
     show_hidden: bool,
     main_dir: String,
     style_path: String,
+    icon_theme: String,
 }
 
 impl Default for ConfigVar {
@@ -82,6 +83,7 @@ impl Default for ConfigVar {
             show_hidden: true,
             main_dir: home_dir(),
             style_path: style_path(),
+            icon_theme: "Adwaita".to_string(),
         }
     }
 }
@@ -124,17 +126,16 @@ fn build_ui(app: &Application) {
     // -----------------------------------------------------------------
 
     // Contenitore principale verticale: sopra la barra, sotto i risultati.
+    // È lei l'"isola" nera arrotondata: margini, sfondo e bordi stanno in style.css.
     let main_layout = GtkBox::builder()
         .hexpand(true)
-        .margin_bottom(2)
-        .margin_top(2)
-        .margin_start(2)
-        .margin_end(2)
         .orientation(Orientation::Vertical)
         .build();
+    main_layout.add_css_class("island");
 
     // Barra di ricerca.
     let searchbar = SearchEntry::builder().build();
+    searchbar.add_css_class("search_bar");
 
     // Lista verticale dei risultati (una riga per file trovato).
     let results_list = ListBox::builder().build();
@@ -174,6 +175,7 @@ fn build_ui(app: &Application) {
             };
             let icon = gio::content_type_get_icon(&file_type);
             let icon_image = gtk4::Image::builder().gicon(&icon).pixel_size(32).build();
+
             let row_container = GtkBox::builder()
                 .orientation(Orientation::Horizontal)
                 .hexpand(true)
@@ -278,6 +280,15 @@ fn build_ui(app: &Application) {
     searchbar.set_key_capture_widget(Some(&window));
     // present() non disegna subito: mette in coda, il main loop la mostrerà.
     load_css(&window, &config);
+    let icon_theme = gtk4::Settings::default();
+        match icon_theme {
+            Some(theme) => {
+                theme.set_gtk_icon_theme_name(Some(&config.icon_theme.as_str()));
+            }
+            None => {
+
+            }
+        }
     window.init_layer_shell();
     window.set_keyboard_mode(KeyboardMode::Exclusive);
     window.set_layer(Layer::Overlay);
