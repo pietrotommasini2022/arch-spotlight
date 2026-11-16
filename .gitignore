@@ -1,1 +1,5 @@
 /target
+packaging/arch-spotlight/
+packaging/src/
+packaging/pkg/
+*.pkg.tar.zst
