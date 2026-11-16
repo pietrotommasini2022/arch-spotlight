@@ -132,6 +132,7 @@ fn build_ui(app: &Application) {
 
     // Lista verticale dei risultati (una riga per file trovato).
     let results_list = ListBox::builder().build();
+    results_list.add_css_class("results_list");
 
     // -----------------------------------------------------------------
     // Segnale: il testo della barra è cambiato -> nuova ricerca
@@ -166,7 +167,8 @@ fn build_ui(app: &Application) {
 
             let name_label = Label::builder().label(&file.name).xalign(0.0).build();
             let path_label = Label::builder().label(&file.path).xalign(0.0).build();
-            path_label.add_css_class("dim-label"); // stile GTK per testo attenuato
+            path_label.add_css_class("path_label"); // stile GTK per testo attenuato
+            name_label.add_css_class("name_label");
 
             row_layout.append(&name_label);
             row_layout.append(&path_label);
