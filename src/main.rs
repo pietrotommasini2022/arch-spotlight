@@ -64,11 +64,24 @@ impl AsRef<str> for FileEntry {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(default)]
 struct ConfigVar {
     ignored_dirs: Vec<String>,
     max_results: usize,
     show_hidden: bool,
     main_dir: String,
+    style_path: String,
+}
+
+impl Default for ConfigVar {
+    fn default() -> Self {
+        ConfigVar { ignored_dirs: IGNORED_DIRS.iter().map(|item| item.to_string()).collect(),
+        max_results: MAX_RESULTS,
+        show_hidden: true,
+        main_dir: home_dir(),
+        style_path: style_path(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -233,6 +246,7 @@ fn build_ui(app: &Application) {
     // Qualsiasi tasto premuto nella finestra finisce nella barra di ricerca.
     searchbar.set_key_capture_widget(Some(&window));
     // present() non disegna subito: mette in coda, il main loop la mostrerà.
+    load_css(&window, &config);
     window.present();
 
     // -----------------------------------------------------------------
@@ -385,23 +399,14 @@ fn load_config() -> ConfigVar {
                 }
                 Err(err) => {
                     println!("{err}");
-                    default_config()
+                    ConfigVar::default()
                 }
             }
         }
         Err(err) => {
             println!("{err}");
-            default_config()
+            ConfigVar::default()
         }
-    }
-}
-
-fn default_config() -> ConfigVar {
-    ConfigVar {
-        ignored_dirs: IGNORED_DIRS.iter().map(|item| item.to_string()).collect(),
-        max_results: MAX_RESULTS,
-        show_hidden: true,
-        main_dir: home_dir(),
     }
 }
 
@@ -424,4 +429,23 @@ fn config_path() -> String {
 fn cache_path() -> String {
     let cache_path = format!("{}/.cache/arch-spotlight-index.txt", home_dir());
     return cache_path
+}
+
+fn style_path() -> String {
+    let style_path = format!("{}/.config/arch-spotlight/style.css", home_dir());
+    return style_path
+}
+
+fn load_css(window: &ApplicationWindow, config: &ConfigVar) {
+    let css_provider = gtk4::CssProvider::new();
+    let css_path = &config.style_path;
+    match std::fs::read_to_string(css_path) {
+        Ok(css_info) => {
+            css_provider.load_from_string(&css_info);
+            gtk4::style_context_add_provider_for_display(&RootExt::display(window), &css_provider, gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION)
+        }
+        Err(_) => {
+            println!("couldn't find the style.css file")
+        }
+    }
 }
